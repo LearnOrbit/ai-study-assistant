@@ -1,85 +1,20 @@
-import React from 'react'
 import { Link } from 'react-router-dom'
+import Icon from '../components/common/Icon'
 
-const Home = () => {
-  const features = [
-    {
-      title: 'AI Chat Assistant',
-      description: 'Get instant answers and explanations for any topic',
-      icon: '🤖',
-      link: '/study',
-      color: 'bg-blue-500'
-    },
-    {
-      title: 'Document Library',
-      description: 'Upload PDFs, docs and get AI-powered summaries',
-      icon: '📑',
-      link: '/library',
-      color: 'bg-green-500'
-    },
-    {
-      title: 'Practice Problems',
-      description: 'Solve math, science problems with step-by-step help',
-      icon: '🧩',
-      link: '/practice',
-      color: 'bg-purple-500'
-    },
-    {
-      title: 'Progress Analytics',
-      description: 'Track your learning journey and identify weak areas',
-      icon: '📈',
-      link: '/analytics',
-      color: 'bg-orange-500'
-    }
-  ]
-
-  return (
-    <div className="container mx-auto px-4 py-8">
-      <header className="text-center mb-12">
-        <h1 className="text-5xl font-bold text-gray-800 mb-4">
-          Welcome to AI Study Assistant 🎓
-        </h1>
-        <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-          Transform your learning experience with AI-powered tools designed to help you study smarter, not harder
-        </p>
-      </header>
-      
-      <div className="grid md:grid-cols-2 gap-8 mb-12">
-        {features.map((feature, index) => (
-          <Link
-            key={index}
-            to={feature.link}
-            className="group bg-white rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-2 overflow-hidden"
-          >
-            <div className={`${feature.color} h-2`}></div>
-            <div className="p-8">
-              <div className="text-4xl mb-4">{feature.icon}</div>
-              <h3 className="text-2xl font-bold text-gray-800 mb-3 group-hover:text-blue-600 transition-colors">
-                {feature.title}
-              </h3>
-              <p className="text-gray-600 text-lg leading-relaxed">
-                {feature.description}
-              </p>
-              <div className="mt-4 text-blue-500 font-semibold group-hover:text-blue-700">
-                Get Started →
-              </div>
-            </div>
-          </Link>
-        ))}
-      </div>
-
-      <div className="bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl text-white p-8 text-center">
-        <h2 className="text-3xl font-bold mb-4">Ready to boost your learning?</h2>
-        <p className="text-xl mb-6">Join thousands of students already using AI to excel in their studies</p>
-        <Link
-          to="/study"
-          className="bg-white text-blue-600 px-8 py-3 rounded-lg font-semibold hover:bg-gray-100 transition-colors inline-block"
-        >
-          Start Learning Now
-        </Link>
-      </div>
-    </div>
-  )
+const tools = [
+  { title: 'Understand anything', text: 'Work through tricky concepts with an AI study companion.', icon: 'chat', label: 'Start a conversation', to: '/study', tone: 'mint' },
+  { title: 'Your knowledge, organized', text: 'Bring your notes and documents together. Find the important bits.', icon: 'book', label: 'Explore your library', to: '/library', tone: 'peach' },
+  { title: 'Turn practice into progress', text: 'Put your knowledge to the test with step-by-step problems.', icon: 'practice', label: 'Try a practice problem', to: '/practice', tone: 'lilac' },
+]
+export default function Home() {
+  const date = new Intl.DateTimeFormat('en', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())
+  return <div className="dashboard">
+    <div className="dashboard-heading"><div><div className="eyebrow">A LITTLE CURIOSITY GOES A LONG WAY</div><h1>Make room for your next <em>aha.</em></h1><p>Your ideas, your pace. Let’s make learning feel a little lighter.</p></div><span className="date-label"><Icon name="clock" size={16} />{date}</span></div>
+    <section className="hero-panel" aria-labelledby="hero-title">
+      <div className="hero-copy"><span className="hero-badge"><Icon name="sparkle" size={15} /> YOUR PERSONAL LEARNING COMPANION</span><h2 id="hero-title">Big questions.<br />Brighter understanding.</h2><p>Untangle a concept, make sense of your notes, or explore something new. You don’t have to figure it all out alone.</p><div className="hero-actions"><Link className="primary-action" to="/study">Start studying <Icon name="arrow" size={18} /></Link><Link className="secondary-action" to="/library"><Icon name="upload" size={17} /> Upload your notes</Link></div><div className="hero-footnote"><Icon name="check" size={15} /> Learn at your own pace, one question at a time.</div></div>
+      <div className="learning-art" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><span className="art-star star-one">✦</span><span className="art-star star-two">✧</span><div className="floating-label"><span className="mini-check"><Icon name="check" size={13} /></span> A little clearer. A lot more confident.</div><div className="art-card card-back" /><div className="art-card card-front"><div className="art-card-heading"><span><Icon name="sparkle" size={20} /></span>THE LEARNING PROCESS</div><div className="art-card-title">Connect the dots.</div><div className="concept-map"><span className="concept concept-a">Ask</span><span className="concept concept-b">Explore</span><span className="concept concept-c">Understand</span><i className="connector connector-a" /><i className="connector connector-b" /></div><div className="art-lines"><i /><i /><i /></div><div className="art-card-footer"><span className="mini-check"><Icon name="check" size={12} /></span> A new perspective unlocked</div></div><div className="idea-tag"><Icon name="practice" size={17} /> That aha! feeling</div></div>
+    </section>
+    <section className="tools-section" aria-labelledby="tools-title"><div className="section-heading"><div><h2 id="tools-title">A toolkit for your curious mind</h2><p>Pick a starting point. We’ll help with the rest.</p></div><span className="section-kicker">LESS FRICTION. MORE LEARNING.</span></div><div className="tool-grid">{tools.map(tool => <Link to={tool.to} className={`tool-card ${tool.tone}`} key={tool.title}><div className="tool-top"><span className="tool-icon"><Icon name={tool.icon} size={23} /></span><Icon name="arrow" size={19} /></div><h3>{tool.title}</h3><p>{tool.text}</p><span className="tool-link">{tool.label}<Icon name="arrow" size={16} /></span></Link>)}</div></section>
+    <div className="dashboard-bottom"><section className="getting-started"><div className="section-heading"><h2>A good place to begin</h2><span className="small-pill">YOUR FIRST STEPS</span></div><Link className="step-row" to="/library"><span className="step-number">01</span><div><h3>Bring your learning materials</h3><p>Upload a document or a set of notes to your library.</p></div><Icon name="arrow" size={19} /></Link><Link className="step-row" to="/study"><span className="step-number">02</span><div><h3>Follow your curiosity</h3><p>Ask a question, break down a topic, or get a fresh explanation.</p></div><Icon name="arrow" size={19} /></Link></section><section className="insight-card"><span className="insight-label"><Icon name="chart" size={18} /> THE BIGGER PICTURE</span><h2>Small steps.<br />Meaningful progress.</h2><p>Reflect on what you’re learning and discover where to focus next.</p><Link to="/analytics">Explore learning insights <Icon name="arrow" size={17} /></Link></section></div>
+  </div>
 }
-
-export default Home
