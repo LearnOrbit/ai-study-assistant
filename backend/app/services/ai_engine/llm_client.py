@@ -1,85 +1,52 @@
+"""Shared Gemini client for text and uploaded study material."""
+import asyncio
+import logging
+from fastapi import HTTPException
+from google.api_core.exceptions import InvalidArgument, PermissionDenied, ResourceExhausted, NotFound
 import google.generativeai as genai
 from app.config import settings
-from typing import List, Dict, Optional
 
+logger = logging.getLogger(__name__)
 
 class LLMClient:
     def __init__(self):
         self.api_key = settings.gemini_api_key
         if self.api_key:
             genai.configure(api_key=self.api_key)
-        # Using Gemini 2.0 Flash - fast and efficient
-        self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
 
-    async def generate_response(self, prompt: str, max_tokens: int = 1000):
-        """Generate a response to a prompt"""
+    async def generate_content(self, contents, temperature=0.5, max_tokens=2000):
+        if not self.api_key:
+            raise HTTPException(503, "Study AI is not configured. Set GEMINI_API_KEY on the backend.")
         try:
-            if not self.api_key:
-                return "Please configure your Gemini API key in the .env file"
-
-            response = self.model.generate_content(prompt)
+            model = genai.GenerativeModel(settings.gemini_model)
+            response = await asyncio.wait_for(asyncio.to_thread(
+                model.generate_content, contents,
+                generation_config={"temperature": temperature, "max_output_tokens": max_tokens},
+            ), timeout=90)
+            if not response.text.strip():
+                raise ValueError("Empty AI response")
             return response.text
+        except (InvalidArgument, PermissionDenied) as error:
+            logger.warning("AI configuration rejected (%s)", type(error).__name__)
+            raise HTTPException(503, "The AI provider rejected the request. Check the backend GEMINI_API_KEY and supported input format.") from error
+        except ResourceExhausted as error:
+            raise HTTPException(429, "The AI usage limit was reached. Please try again later.") from error
+        except NotFound as error:
+            raise HTTPException(503, "The configured AI model is unavailable. Check GEMINI_MODEL on the backend.") from error
+        except Exception as error:
+            logger.warning("AI generation failed (%s)", type(error).__name__)
+            raise HTTPException(502, "The AI service is unavailable. Try again or check the backend API key and GEMINI_MODEL.") from error
 
-        except Exception as e:
-            return f"Error: {str(e)}"
+    async def generate_response(self, prompt, max_tokens=1000):
+        return await self.generate_content(prompt, max_tokens=max_tokens)
 
-    async def generate_summary(self, text: str):
-        """Generate a summary of the given text"""
-        prompt = f"Summarize the following text concisely:\n\n{text}"
-        return await self.generate_response(prompt)
-    
-    async def generate_completion(
-        self, 
-        messages: List[Dict[str, str]], 
-        temperature: float = 0.7,
-        max_tokens: int = 1000
-    ) -> str:
-        """
-        Generate completion using message format
-        
-        Args:
-            messages: List of message dictionaries with 'role' and 'content'
-            temperature: Sampling temperature (0.0 to 1.0)
-            max_tokens: Maximum tokens to generate
-            
-        Returns:
-            Generated text response
-        """
-        try:
-            if not self.api_key:
-                raise ValueError("Gemini API key not configured")
-            
-            # Convert messages to a single prompt
-            prompt_parts = []
-            for msg in messages:
-                role = msg.get('role', 'user')
-                content = msg.get('content', '')
-                
-                if role == 'system':
-                    prompt_parts.append(f"Instructions: {content}")
-                elif role == 'user':
-                    prompt_parts.append(content)
-            
-            full_prompt = "\n\n".join(prompt_parts)
-            
-            # Generate response
-            generation_config = {
-                "temperature": temperature,
-                "max_output_tokens": max_tokens,
-            }
-            
-            model = genai.GenerativeModel(
-                'gemini-2.0-flash-exp',
-                generation_config=generation_config
-            )
-            
-            response = model.generate_content(full_prompt)
-            return response.text
-            
-        except Exception as e:
-            raise Exception(f"Completion generation failed: {str(e)}")
+    async def generate_summary(self, text):
+        return await self.generate_response(f"Summarize this study material accurately:\n\n{text}")
+
+    async def generate_completion(self, messages, temperature=0.7, max_tokens=2000):
+        prompt = "\n\n".join(f"{item['role']}: {item['content']}" for item in messages)
+        return await self.generate_content(prompt, temperature, max_tokens)
 
 
-def get_llm_client() -> LLMClient:
-    """Dependency for getting LLM client"""
+def get_llm_client():
     return LLMClient()

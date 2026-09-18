@@ -60,10 +60,10 @@ class StudyQueryValidator:
 
             if use_ai_validation:
                 # Use lightweight model for validation to save tokens
-                self.validator_model = genai.GenerativeModel('gemini-2.0-flash-exp')
+                self.validator_model = genai.GenerativeModel(settings.gemini_model)
 
             # Main model for answering study queries
-            self.study_model = genai.GenerativeModel('gemini-2.0-flash-exp')
+            self.study_model = genai.GenerativeModel(settings.gemini_model)
 
             logger.info("StudyQueryValidator initialized successfully")
         except Exception as e:

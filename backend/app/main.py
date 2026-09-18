@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from app.core.database import engine, Base
-from app.api.routes import auth, documents, summarization, questions
+from app.api.routes import auth, documents, summarization, questions, workspace, problems
 from app.api import chat_routes  # ✅ ONLY CHANGE: Import chat_routes instead of chat
 from app.config import settings
 
@@ -18,6 +18,17 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     
+    # The existing local demo uses user 1; ensure uploads have a real owner.
+    from app.core.security import TESTING_MODE, TEST_USER_ID
+    from app.core.database import AsyncSessionLocal
+    from app.models.user import User
+    if TESTING_MODE:
+        async with AsyncSessionLocal() as db:
+            if await db.get(User, TEST_USER_ID) is None:
+                db.add(User(id=TEST_USER_ID, email="local-study@example.invalid",
+                            username="local-study", hashed_password="!disabled"))
+                await db.commit()
+
     # Create necessary directories
     os.makedirs("uploads/images", exist_ok=True)
     os.makedirs("uploads/documents", exist_ok=True)
@@ -46,20 +57,18 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173", 
-        "http://localhost:5175",
-        "http://localhost:3000"
-    ],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Mount static files for serving uploaded images
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+app.mount("/uploads", StaticFiles(directory=settings.upload_dir, check_dir=False), name="uploads")
 
 # Include routers
+app.include_router(problems.router, prefix="/api/problems", tags=["Problem solver"])
+app.include_router(workspace.router, prefix="/api", tags=["Workspace"])
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(questions.router, prefix="/api/questions", tags=["Questions"])
 app.include_router(chat_routes.router, tags=["Chat"])  # ✅ ONLY CHANGE: Use chat_routes.router

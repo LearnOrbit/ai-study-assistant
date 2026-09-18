@@ -1,11 +1,25 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { post, upload } from '../services/http'
 import chatService from '../services/chatService'
 
 const Study = () => {
   const [message, setMessage] = useState('')
   const [chatHistory, setChatHistory] = useState([])
   const [isLoading, setIsLoading] = useState(false)
-  const [activeTab, setActiveTab] = useState('chat')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const allowedTabs = ['chat', 'summarize', 'image', 'audio', 'doubt']
+  const activeTab = allowedTabs.includes(searchParams.get('tab')) ? searchParams.get('tab') : 'chat'
+  const setActiveTab = tab => { setSearchParams({ tab }); setResults([]) }
+  const recordingRef = useRef(null)
+  useEffect(() => () => {
+    const recorder = recordingRef.current
+    if (recorder) {
+      recorder.onstop = null
+      if (recorder.state !== 'inactive') recorder.stop()
+      recorder.stream.getTracks().forEach(track => track.stop())
+    }
+  }, [])
   const [summarizeInput, setSummarizeInput] = useState('')
   const [doubtInput, setDoubtInput] = useState('')
   const [audioRecording, setAudioRecording] = useState(false)
@@ -21,7 +35,7 @@ const Study = () => {
 
   // Chat functionality with VALIDATION
   const handleSendMessage = async () => {
-    if (!message.trim()) return
+    if (!message.trim() || isLoading) return
 
     const userMessage = { type: 'user', content: message, timestamp: new Date() }
     setChatHistory(prev => [...prev, userMessage])
@@ -30,12 +44,12 @@ const Study = () => {
 
     try {
       // Use chatService which handles validation
-      const result = await chatService.sendMessage(message)
+      const result = await chatService.sendMessage(message, chatHistory.slice(-6).map(item => `${item.type}: ${item.content}`).join('\n'))
 
       let aiMessage
       
       // Check if query was rejected
-      if (result.isRejected || (!result.success && result.error)) {
+      if (result.isRejected) {
         aiMessage = {
           type: 'ai',
           content: result.message || 'This assistant only answers study-related questions.',
@@ -79,140 +93,61 @@ const Study = () => {
     }
   }
 
-  // Summarization functionality
-const handleSummarize = async () => {
-  if (!summarizeInput.trim()) return
-
-  setIsLoading(true)
-  setResults([])
-  
-  try {
-    alert('Starting summarize request...')
-    
-    const res = await fetch('http://localhost:8000/api/summarize/solve', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        problem: `Please provide a clear and concise summary of the following text:\n\n${summarizeInput}`,
-        type: 'general'
-      })
-    })
-    
-    alert(`Response status: ${res.status}`)
-    
-    const data = await res.json()
-    alert(`Data received: ${JSON.stringify(data)}`)
-    
-    if (!res.ok) {
-      alert(`Error from server: ${JSON.stringify(data)}`)
-      setResults([{ 
-        title: 'Error', 
-        content: JSON.stringify(data, null, 2)
-      }])
-    } else {
-      alert(`Success! Solution: ${data.solution}`)
-      setResults([{ 
-        title: 'Summary', 
-        content: data.solution
-      }])
-      setSummarizeInput('')
-    }
-  } catch (error) {
-    alert(`Caught error: ${error.toString()}`)
-    setResults([{ 
-      title: 'Error', 
-      content: error.toString()
-    }])
-  }
-  
-  setIsLoading(false)
-}
-  // Image analysis
-  const handleImageUpload = async (e) => {
-    const file = e.target.files[0]
-    if (!file) return
-
+  const runStudyAction = async (action, title) => {
+    if (isLoading) return
     setIsLoading(true)
+    setResults([])
     try {
-      const formData = new FormData()
-      formData.append('file', file)
-
-      const res = await fetch('http://localhost:8000/api/summarize/image', {
-        method: 'POST',
-        body: formData
-      })
-      const data = await res.json()
-      setResults([{ title: 'Image Analysis', content: data.analysis || data.summary || 'Image analyzed successfully' }])
+      const content = await action()
+      setResults([{ title, content }])
     } catch (error) {
-      setResults([{ title: 'Error', content: 'Failed to analyze image. Please try again.' }])
+      setResults([{ title: 'Error', content: error.message }])
+    } finally {
+      setIsLoading(false)
     }
-    setIsLoading(false)
   }
 
-  // Audio recording and transcription
+  const handleSummarize = () => {
+    if (!summarizeInput.trim()) return
+    return runStudyAction(async () => (await post('/summarize/text', { text: summarizeInput })).summary, 'Summary')
+  }
+  const handleImageUpload = e => {
+    const file = e.target.files[0]
+    e.target.value = ''
+    if (file) return runStudyAction(async () => (await upload('/summarize/image', file)).analysis, 'Image Analysis')
+  }
+  const handleAudioTranscription = blob => runStudyAction(
+    async () => (await upload('/summarize/audio', blob, blob.type.includes('mp4') ? 'recording.mp4' : 'recording.webm')).transcription,
+    'Audio Transcription',
+  )
   const startAudioRecording = async () => {
+    if (audioRecording || isLoading) return
+    let stream
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const recorder = new MediaRecorder(stream)
+      recordingRef.current = recorder
       setMediaRecorder(recorder)
       setAudioRecording(true)
-
       const chunks = []
-      recorder.ondataavailable = (e) => chunks.push(e.data)
-      recorder.onstop = async () => {
-        const blob = new Blob(chunks, { type: 'audio/webm' })
-        handleAudioTranscription(blob)
+      recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data) }
+      recorder.onstop = () => {
+        stream.getTracks().forEach(track => track.stop())
+        setAudioRecording(false)
+        handleAudioTranscription(new Blob(chunks, { type: recorder.mimeType }))
       }
-
       recorder.start()
-    } catch (error) {
-      alert('Microphone access denied. Please check your browser permissions.')
+    } catch {
+      stream?.getTracks().forEach(track => track.stop())
+      setResults([{ title: 'Error', content: 'Recording is unavailable. Allow microphone access and use HTTPS or localhost.' }])
     }
   }
-
   const stopAudioRecording = () => {
-    if (mediaRecorder) {
-      mediaRecorder.stop()
-      setAudioRecording(false)
-    }
+    if (mediaRecorder?.state === 'recording') mediaRecorder.stop()
   }
-
-  const handleAudioTranscription = async (audioBlob) => {
-    setIsLoading(true)
-    try {
-      const formData = new FormData()
-      formData.append('file', audioBlob, 'recording.webm')
-
-      const res = await fetch('http://localhost:8000/api/summarize/audio', {
-        method: 'POST',
-        body: formData
-      })
-      const data = await res.json()
-      setResults([{ title: 'Audio Transcription', content: data.transcription || data.text || 'Audio recorded successfully' }])
-    } catch (error) {
-      setResults([{ title: 'Error', content: 'Failed to transcribe audio. Please try again.' }])
-    }
-    setIsLoading(false)
-  }
-
-  // Doubt solving
-  const handleSolveDoubt = async () => {
+  const handleSolveDoubt = () => {
     if (!doubtInput.trim()) return
-
-    setIsLoading(true)
-    try {
-      const res = await fetch('http://localhost:8000/api/summarize/solve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ problem: doubtInput, type: 'doubt' })
-      })
-      const data = await res.json()
-      setResults([{ title: 'Solution', content: data.solution || data.answer || 'Solution generated successfully' }])
-      setDoubtInput('')
-    } catch (error) {
-      setResults([{ title: 'Error', content: 'Failed to solve doubt. Please try again.' }])
-    }
-    setIsLoading(false)
+    return runStudyAction(async () => (await post('/summarize/solve', { problem: doubtInput, type: 'doubt' })).solution, 'Solution')
   }
 
   return (
@@ -233,6 +168,7 @@ const handleSummarize = async () => {
         ].map(tab => (
           <button
             key={tab.id}
+            disabled={isLoading || audioRecording}
             onClick={() => setActiveTab(tab.id)}
             className={`py-2 px-3 rounded font-medium transition-colors whitespace-nowrap ${
               activeTab === tab.id
@@ -335,13 +271,16 @@ const handleSummarize = async () => {
                   onChange={(e) => setMessage(e.target.value)}
                   onKeyPress={handleKeyPress}
                   placeholder="Type your question here... (Press Enter to send)"
-                  className="flex-1 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  aria-label="Study question"
+                  maxLength={2000}
+                  className="min-w-0 flex-1 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                   rows="2"
                   disabled={isLoading}
                 />
                 <button
                   onClick={handleSendMessage}
                   disabled={isLoading || !message.trim()}
+                  aria-label="Send question"
                   className="bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
                 >
                   {isLoading ? '⏳' : '🚀'}
@@ -390,7 +329,7 @@ const handleSummarize = async () => {
               <div className="text-6xl mb-4">🖼️</div>
               <input
                 type="file"
-                accept="image/*"
+                accept="image/png,image/jpeg,image/webp"
                 onChange={handleImageUpload}
                 disabled={isLoading}
                 className="hidden"

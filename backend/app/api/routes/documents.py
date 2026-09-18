@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from typing import List, Optional
@@ -22,7 +22,7 @@ from app.services.document_processing.image_processor import process_image, solv
 
 router = APIRouter()
 
-UPLOAD_DIR = "uploads"
+UPLOAD_DIR = settings.upload_dir
 
 def ensure_upload_dir():
     """Create upload directory if it doesn't exist."""
@@ -45,7 +45,7 @@ async def upload_document(
     - **subject**: Optional subject classification
     """
     # Read file content to get size for validation
-    content = await file.read()
+    content = await file.read(settings.max_file_size + 1)
     file_size = len(content)
     
     # Reset file pointer to beginning
@@ -61,7 +61,13 @@ async def upload_document(
         )
 
     # Determine document type
-    doc_type = get_file_type(file.filename)
+    extension = Path(file.filename or "").suffix.lower()
+    types = {".pdf": DocumentType.PDF, ".docx": DocumentType.DOCX, ".txt": DocumentType.TXT}
+    if extension not in types:
+        raise HTTPException(400, "Supported library formats are PDF, DOCX, and TXT.")
+    if not content:
+        raise HTTPException(400, "The document is empty.")
+    doc_type = types[extension]
 
     # Generate unique filename
     file_extension = os.path.splitext(file.filename)[1]
@@ -111,7 +117,15 @@ async def upload_document(
 
     # Process document based on type
     try:
-        if doc_type == DocumentType.PDF:
+        if doc_type == DocumentType.TXT:
+            extracted_text = content.decode("utf-8-sig")
+            if not extracted_text.strip():
+                raise ValueError("The document contains no text.")
+            document.extracted_text = extracted_text
+            document.text_length = len(extracted_text)
+            document.processing_status = ProcessingStatus.COMPLETED
+            document.processed_at = datetime.utcnow()
+        elif doc_type == DocumentType.PDF:
             extracted_text = await process_pdf(file_path)
             document.extracted_text = extracted_text
             document.text_length = len(extracted_text)
@@ -146,13 +160,13 @@ async def upload_document(
         document.processing_error = str(e)
         await db.commit()
 
-    return DocumentResponse.from_orm(document)
+    return DocumentResponse.model_validate(document)
 
 
 @router.get("/", response_model=List[DocumentListResponse])
 async def list_documents(
-    skip: int = 0,
-    limit: int = 50,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
     subject: Optional[str] = None,
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
@@ -205,7 +219,7 @@ async def get_document(
     await db.commit()
     await db.refresh(document)
 
-    return DocumentResponse.from_orm(document)
+    return DocumentResponse.model_validate(document)
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -336,3 +350,28 @@ async def solve_image_problem(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Problem solving failed: {str(e)}"
         )
+
+@router.get("/{document_id}/search")
+async def search_document(
+    document_id: int,
+    q: str = Query(..., min_length=1, max_length=200),
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    document = await db.scalar(select(Document).where(Document.id == document_id, Document.user_id == user_id))
+    if document is None:
+        raise HTTPException(404, "Document not found")
+    if document.processing_status != ProcessingStatus.COMPLETED:
+        raise HTTPException(409, "Document text is not available yet.")
+    query = q.strip().lower()
+    if not query:
+        raise HTTPException(400, "Enter a search query.")
+    text = document.extracted_text or ""
+    matches, offset = [], 0
+    while len(matches) < 20:
+        index = text.lower().find(query, offset)
+        if index < 0:
+            break
+        matches.append({"title": document.title, "excerpt": text[max(0, index - 100):index + len(query) + 180], "relevance": "Text match"})
+        offset = index + len(query)
+    return {"results": matches}

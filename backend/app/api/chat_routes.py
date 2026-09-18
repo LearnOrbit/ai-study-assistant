@@ -1,6 +1,8 @@
 # app/api/chat_routes.py
 
 from fastapi import APIRouter, HTTPException, status
+from starlette.concurrency import run_in_threadpool
+from app.config import settings
 from pydantic import BaseModel, Field
 from typing import Optional
 from app.services.query_validator import get_validator
@@ -49,8 +51,12 @@ async def chat_with_ai(request: ChatRequest):
     Only study/education-related questions are processed.
     """
     try:
-        validator = get_validator(use_ai_validation=True, strict_mode=False)
-        result = validator.process_query(query=request.query, context=request.context)
+        if not settings.gemini_api_key:
+            raise HTTPException(503, "Study AI is not configured. Set GEMINI_API_KEY on the backend.")
+        validator = get_validator(use_ai_validation=settings.enable_ai_validation, strict_mode=settings.strict_validation_mode)
+        result = await run_in_threadpool(validator.process_query, query=request.query, context=request.context)
+        if not result["success"] and not result.get("validation"):
+            raise HTTPException(502, "The AI service could not answer. Please try again or check the backend model configuration.")
         
         if result['success']:
             return ChatResponse(
@@ -66,6 +72,8 @@ async def chat_with_ai(request: ChatRequest):
                 validation=result.get('validation')
             )
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Chat endpoint error: {e}", exc_info=True)
         raise HTTPException(
@@ -79,7 +87,7 @@ async def validate_query(request: ChatRequest):
     """Validate if a query is study-related without processing it."""
     try:
         validator = get_validator()
-        validation = validator.validate_query(request.query)
+        validation = await run_in_threadpool(validator.validate_query, request.query)
         
         return ValidationResponse(
             query=request.query,
@@ -89,6 +97,8 @@ async def validate_query(request: ChatRequest):
             details=validation
         )
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Validation endpoint error: {e}", exc_info=True)
         raise HTTPException(
@@ -109,6 +119,8 @@ async def health_check():
             "ai_validation_enabled": validator.use_ai_validation,
             "strict_mode": validator.strict_mode
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Health check failed: {e}", exc_info=True)
         return {"status": "unhealthy", "error": str(e)}

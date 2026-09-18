@@ -26,7 +26,7 @@ async def process_pdf(file_path: str) -> str:
             # Extract text from each page
             for page_num in range(len(pdf_reader.pages)):
                 page = pdf_reader.pages[page_num]
-                text = page.extract_text()
+                text = page.extract_text() or ""
                 
                 if text.strip():
                     extracted_text.append(text)

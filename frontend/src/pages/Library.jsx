@@ -1,192 +1,89 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
+import { documentAPI, summarizationAPI } from '../services/api'
+import { request } from '../services/http'
 
+const toDocument = doc => ({
+  id: doc.id, name: doc.title, size: `${(doc.file_size / 1024).toFixed(1)} KB`,
+  type: doc.document_type, status: doc.processing_status,
+  uploadDate: new Date(doc.created_at).toLocaleDateString(),
+})
 const Library = () => {
   const [documents, setDocuments] = useState([])
   const [dragActive, setDragActive] = useState(false)
-  const [selectedFiles, setSelectedFiles] = useState([])
   const [isLoading, setIsLoading] = useState(false)
+  const [initialLoading, setInitialLoading] = useState(true)
+  const [error, setError] = useState('')
   const [summaryModal, setSummaryModal] = useState(null)
   const [searchModal, setSearchModal] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState([])
 
-  const handleDrag = (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (e.type === "dragenter" || e.type === "dragover") {
-      setDragActive(true)
-    } else if (e.type === "dragleave") {
-      setDragActive(false)
-    }
+  useEffect(() => {
+    let active = true
+    documentAPI.getDocuments().then(data => { if (active) setDocuments(data.map(toDocument)) })
+      .catch(error => { if (active) setError(error.message) })
+      .finally(() => { if (active) setInitialLoading(false) })
+    return () => { active = false }
+  }, [])
+  const handleDrag = event => {
+    event.preventDefault()
+    event.stopPropagation()
+    setDragActive(event.type !== 'dragleave')
   }
-
-  const handleDrop = (e) => {
-    e.preventDefault()
-    e.stopPropagation()
+  const handleDrop = event => {
+    event.preventDefault()
     setDragActive(false)
-
-    const files = Array.from(e.dataTransfer.files)
-    handleFiles(files)
+    handleFiles(Array.from(event.dataTransfer.files))
   }
-
-  const handleFileSelect = (e) => {
-    const files = Array.from(e.target.files)
-    handleFiles(files)
+  const handleFileSelect = event => {
+    handleFiles(Array.from(event.target.files))
+    event.target.value = ''
   }
-
-  const handleFiles = (files) => {
-    const newDocs = files.map(file => ({
-      id: Date.now() + Math.random(),
-      name: file.name,
-      size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
-      type: file.type,
-      uploadDate: new Date().toLocaleDateString(),
-      file: file,
-      summary: null,
-      uploadedToServer: false
-    }))
-    setDocuments(prev => [...prev, ...newDocs])
-    setSelectedFiles([])
-  }
-
-  const removeDocument = (id) => {
-    setDocuments(prev => prev.filter(doc => doc.id !== id))
-  }
-
-  const getFileIcon = (type) => {
-    if (type.includes('pdf')) return '📄'
-    if (type.includes('word')) return '📄'
-    if (type.includes('text')) return '📝'
-    return '📁'
-  }
-
-  // Upload document to server
-  const uploadDocumentToServer = async (doc) => {
-    try {
-      const formData = new FormData()
-      formData.append('file', doc.file)
-      formData.append('title', doc.name)
-
-      // Try main endpoint first, fallback to test endpoint
-      let res = await fetch('http://localhost:8000/api/documents/upload', {
-        method: 'POST',
-        body: formData
-      })
-
-      // If main endpoint fails, try test endpoint
-      if (!res.ok) {
-        formData.delete('title')
-        res = await fetch('http://localhost:8000/api/summarize/test-upload', {
-          method: 'POST',
-          body: formData
-        })
-      }
-
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}))
-        console.error('Upload error response:', errorData)
-        throw new Error(errorData.detail || 'Upload failed')
-      }
-      const data = await res.json()
-      return data.id || data.document_id || 1
-    } catch (error) {
-      console.error('Upload error:', error)
-      throw error
-    }
-  }
-
-  // Summarize document
-  const handleSummarize = async (doc) => {
+  const handleFiles = async files => {
+    if (isLoading || initialLoading) return
     setIsLoading(true)
-    setSummaryModal({ loading: true, content: null, error: null })
-
-    try {
-      // First, upload if not already uploaded
-      let documentId = doc.uploadedToServer
-      if (!documentId) {
-        documentId = await uploadDocumentToServer(doc)
-      }
-
-      // Then summarize
-      const res = await fetch(`http://localhost:8000/api/summarize/${documentId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ level: 'moderate' })
-      })
-
-      if (!res.ok) throw new Error('Summarization failed')
-      const data = await res.json()
-
-      setSummaryModal({
-        loading: false,
-        content: data.summary || data.response,
-        error: null
-      })
-
-      // Update document with summary
-      setDocuments(prev =>
-        prev.map(d =>
-          d.id === doc.id
-            ? { ...d, summary: data.summary || data.response, uploadedToServer: documentId }
-            : d
-        )
-      )
-    } catch (error) {
-      setSummaryModal({
-        loading: false,
-        content: null,
-        error: error.message || 'Failed to summarize document'
-      })
+    setError('')
+    const failures = []
+    for (const file of files) {
+      try {
+        if (!/\.(pdf|docx|txt)$/i.test(file.name)) throw new Error('Choose a PDF, DOCX, or TXT file.')
+        if (!file.size || file.size > 10 * 1024 * 1024) throw new Error('Files must be nonempty and at most 10 MB.')
+        const doc = await documentAPI.uploadDocument(file)
+        setDocuments(previous => [toDocument(doc), ...previous])
+        if (doc.processing_status === 'failed') failures.push(`${file.name}: ${doc.processing_error || 'Text extraction failed.'}`)
+      } catch (error) { failures.push(`${file.name}: ${error.message}`) }
     }
-
+    setError(failures.join(' '))
     setIsLoading(false)
   }
-
-  // Search in document
-  const handleSearch = async (doc) => {
-    if (!searchQuery.trim()) {
-      alert('Please enter a search query')
-      return
-    }
-
+  const removeDocument = async id => {
     setIsLoading(true)
-    setSearchModal({ loading: true, results: [], error: null })
-
+    setError('')
     try {
-      // First, upload if not already uploaded
-      let documentId = doc.uploadedToServer
-      if (!documentId) {
-        documentId = await uploadDocumentToServer(doc)
-      }
-
-      // Simple search: find matching text
-      const query = searchQuery.toLowerCase()
-      const results = []
-
-      // This is a client-side search for now
-      // In production, you'd use a backend search endpoint
-      const text = doc.file ? 'Document uploaded for search' : ''
-
-      results.push({
-        title: doc.name,
-        excerpt: `Searched for: "${searchQuery}" in ${doc.name}`,
-        relevance: 'Found'
-      })
-
-      setSearchModal({
-        loading: false,
-        results: results,
-        error: null
-      })
-    } catch (error) {
-      setSearchModal({
-        loading: false,
-        results: [],
-        error: error.message || 'Failed to search document'
-      })
-    }
-
-    setIsLoading(false)
+      await documentAPI.deleteDocument(id)
+      setDocuments(previous => previous.filter(doc => doc.id !== id))
+    } catch (error) { setError(error.message) }
+    finally { setIsLoading(false) }
+  }
+  const getFileIcon = type => type === 'txt' ? '📝' : '📄'
+  const handleSummarize = async doc => {
+    setIsLoading(true)
+    setSummaryModal({ loading: true })
+    try {
+      const data = await summarizationAPI.summarizeDocument(doc.id)
+      setSummaryModal({ content: data.summary })
+      setDocuments(previous => previous.map(item => item.id === doc.id ? { ...item, summary: data.summary } : item))
+    } catch (error) { setSummaryModal({ error: error.message }) }
+    finally { setIsLoading(false) }
+  }
+  const handleSearch = async doc => {
+    if (!doc || !searchQuery.trim()) return
+    setIsLoading(true)
+    setSearchModal({ docId: doc.id, loading: true })
+    try {
+      const data = await request(`/documents/${doc.id}/search?q=${encodeURIComponent(searchQuery.trim())}`)
+      setSearchModal({ docId: doc.id, results: data.results, searched: true })
+    } catch (error) { setSearchModal({ docId: doc.id, error: error.message }) }
+    finally { setIsLoading(false) }
   }
 
   return (
@@ -196,6 +93,8 @@ const Library = () => {
         <p className="text-gray-600">Upload and manage your study materials</p>
       </div>
 
+      {error && <p role="alert" className="mb-4 rounded-lg bg-red-50 text-red-700 p-4">{error}</p>}
+      {(isLoading || initialLoading) && <p role="status" className="mb-4 text-gray-600">{initialLoading ? 'Loading your library…' : 'Working…'}</p>}
       {/* Upload Area */}
       <div className="bg-white rounded-xl shadow-lg p-8 mb-8">
         <div
@@ -220,7 +119,8 @@ const Library = () => {
           <input
             type="file"
             multiple
-            accept=".pdf,.docx,.txt,.doc"
+            accept=".pdf,.docx,.txt"
+            disabled={isLoading || initialLoading}
             onChange={handleFileSelect}
             className="hidden"
             id="file-upload"
@@ -241,11 +141,7 @@ const Library = () => {
           <h2 className="text-xl font-semibold text-gray-800">
             Your Documents ({documents.length})
           </h2>
-          {documents.length > 0 && (
-            <button className="text-blue-500 hover:text-blue-700 font-medium">
-              ⚙️ Manage All
-            </button>
-          )}
+
         </div>
 
         {documents.length === 0 ? (
@@ -261,6 +157,8 @@ const Library = () => {
                 <div className="flex items-start justify-between mb-3">
                   <div className="text-2xl">{getFileIcon(doc.type)}</div>
                   <button
+                    disabled={isLoading}
+                    aria-label={`Delete ${doc.name}`}
                     onClick={() => removeDocument(doc.id)}
                     className="text-red-500 hover:text-red-700 text-sm"
                   >
@@ -275,6 +173,7 @@ const Library = () => {
                 <div className="text-sm text-gray-500 space-y-1">
                   <p>Size: {doc.size}</p>
                   <p>Uploaded: {doc.uploadDate}</p>
+                  <p>Status: {doc.status}</p>
                 </div>
 
                 {doc.summary && (
@@ -286,13 +185,14 @@ const Library = () => {
                 <div className="mt-4 flex space-x-2">
                   <button
                     onClick={() => handleSummarize(doc)}
-                    disabled={isLoading}
+                    disabled={isLoading || doc.status !== 'completed'}
                     className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded hover:bg-blue-200 disabled:bg-gray-100 disabled:cursor-not-allowed"
                   >
                     {isLoading ? '⏳' : '📊'} Summarize
                   </button>
                   <button
-                    onClick={() => setSearchModal({ ...searchModal, docId: doc.id })}
+                    disabled={isLoading || doc.status !== 'completed'}
+                    onClick={() => { setSearchQuery(''); setSearchModal({ docId: doc.id }) }}
                     className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded hover:bg-green-200"
                   >
                     🔍 Search
@@ -356,7 +256,8 @@ const Library = () => {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Enter search query..."
-                className="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                aria-label="Search document text"
+                className="min-w-0 flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <button
                 onClick={() => handleSearch(documents.find(d => d.id === searchModal.docId))}
@@ -387,7 +288,7 @@ const Library = () => {
                 ))}
               </div>
             ) : (
-              <p className="text-gray-500 text-center py-4">Enter a search query and click Search</p>
+              <p className="text-gray-500 text-center py-4">{searchModal.searched ? 'No matching text found.' : 'Enter a search query and click Search'}</p>
             )}
           </div>
         </div>
