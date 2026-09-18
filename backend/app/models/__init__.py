@@ -5,3 +5,5 @@ from app.models.conversation import Conversation, Message
 from app.models.learning_profile import LearningProfile
 from app.models.problem_attempt import ProblemAttempt
 from app.models.question_history import QuestionHistory
+
+from app.models.solved_problem import SolvedProblem
