@@ -23,6 +23,10 @@
     {
       "source": "/solver",
       "destination": "/index.html"
+    },
+    {
+      "source": "/flashcards",
+      "destination": "/index.html"
     }
   ]
 }

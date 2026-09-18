@@ -7,3 +7,4 @@ from app.models.problem_attempt import ProblemAttempt
 from app.models.question_history import QuestionHistory
 
 from app.models.solved_problem import SolvedProblem
+from app.models.flashcard import Deck, Flashcard, CardReview

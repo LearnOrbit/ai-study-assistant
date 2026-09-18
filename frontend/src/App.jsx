@@ -7,11 +7,13 @@ import Practice from './pages/Practice'
 import Library from './pages/Library'
 import Analytics from './pages/Analytics'
 import Solver from './pages/Solver'
+import Flashcards from './pages/Flashcards'
 
 const navItems = [
   { path: '/', name: 'Overview', icon: 'home' },
   { path: '/study', name: 'Study workspace', icon: 'chat' },
   { path: '/library', name: 'My library', icon: 'book' },
+  { path: '/flashcards', name: 'Flashcards', icon: 'book' },
   { path: '/solver', name: 'Problem solver', icon: 'sparkle' },
   { path: '/practice', name: 'Practice', icon: 'practice' },
   { path: '/analytics', name: 'Learning insights', icon: 'chart' },
@@ -40,7 +42,7 @@ function Workspace() {
       </aside>
       <div className="workspace-body">
         <header className="workspace-header"><div className="header-left"><button className="mobile-menu" aria-label={menuOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={menuOpen} aria-controls="workspace-navigation" onClick={() => setMenuOpen(!menuOpen)}><Icon name={menuOpen ? 'close' : 'menu'} /></button><span className="breadcrumb">Workspace <span>/</span> <strong>{current?.name || 'Overview'}</strong></span></div><span className="header-caption"><span className="online-dot" /> A space for your next breakthrough</span></header>
-        <main id="main-content" className={pathname === '/' ? 'home-content' : 'page-content'}><Routes><Route path="/" element={<Home />} /><Route path="/study" element={<Study />} /><Route path="/practice" element={<Practice />} /><Route path="/library" element={<Library />} /><Route path="/solver" element={<Solver />} /><Route path="/analytics" element={<Analytics />} /></Routes></main>
+        <main id="main-content" className={pathname === '/' ? 'home-content' : 'page-content'}><Routes><Route path="/" element={<Home />} /><Route path="/study" element={<Study />} /><Route path="/practice" element={<Practice />} /><Route path="/library" element={<Library />} /><Route path="/flashcards" element={<Flashcards />} /><Route path="/solver" element={<Solver />} /><Route path="/analytics" element={<Analytics />} /></Routes></main>
         <footer className="workspace-footer"><span>Made for curious minds.</span><span>One idea at a time.</span></footer>
       </div>
     </div>

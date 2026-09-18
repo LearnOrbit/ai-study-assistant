@@ -3,11 +3,13 @@ from datetime import datetime, timedelta
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, func, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.models.document import Document
+from app.models.solved_problem import SolvedProblem
+from app.models.flashcard import CardReview
 from app.models.problem_attempt import ProblemAttempt, ProblemType
 
 router = APIRouter()
@@ -65,17 +67,51 @@ async def submit_attempt(request: AttemptRequest, user_id: int = Depends(get_cur
 async def learning_insights(period: Literal["week", "month", "semester"] = Query("week", alias="range"),
                             user_id: int = Depends(get_current_user_id), db: AsyncSession = Depends(get_db)):
     today = datetime.utcnow().date()
-    since = datetime.combine(today - timedelta(days={"week": 7, "month": 30, "semester": 180}[period] - 1), datetime.min.time())
-    attempts = (await db.scalars(select(ProblemAttempt).where(ProblemAttempt.user_id == user_id, ProblemAttempt.created_at >= since).order_by(ProblemAttempt.created_at.desc()))).all()
-    documents = (await db.scalars(select(Document).where(Document.user_id == user_id, Document.created_at >= since).order_by(Document.created_at.desc()))).all()
-    correct = sum(item.is_correct is True for item in attempts)
+    days = {"week": 7, "month": 30, "semester": 180}[period]
+    since = datetime.combine(today - timedelta(days=days - 1), datetime.min.time())
+    until = datetime.combine(today + timedelta(days=1), datetime.min.time())
+    async def rows(model):
+        return (await db.scalars(select(model).where(model.user_id == user_id,
+            model.created_at >= since, model.created_at < until).order_by(model.created_at.desc()))).all()
+    attempts = await rows(ProblemAttempt)
+    documents = await rows(Document)
+    solutions = await rows(SolvedProblem)
+    reviews = await rows(CardReview)
+    graded = [item for item in attempts if item.is_correct is not None]
+    correct = sum(item.is_correct is True for item in graded)
     subjects = []
     for key, name in NAMES.items():
-        rows = [item for item in attempts if item.problem_type.value == key]
-        subjects.append({"subject": name, "attempts": len(rows), "score": round(100 * sum(item.is_correct is True for item in rows) / len(rows)) if rows else None})
-    activity = [{"activity": f"Practiced {NAMES.get(item.problem_type.value, item.problem_type.value)}", "date": item.created_at.isoformat() + "Z", "result": "Correct" if item.is_correct else "Review needed"} for item in attempts]
+        items = [item for item in graded if item.problem_type.value == key]
+        subjects.append({"subject": name, "attempts": len(items),
+            "score": round(100 * sum(item.is_correct is True for item in items) / len(items)) if items else None})
+    activity = [{"activity": f"Practiced {NAMES.get(item.problem_type.value, item.problem_type.value)}",
+                 "date": item.created_at.isoformat() + "Z", "result": "Not graded" if item.is_correct is None else "Correct" if item.is_correct else "Review needed"} for item in attempts]
     activity += [{"activity": f"Uploaded {item.title}", "date": item.created_at.isoformat() + "Z", "result": item.processing_status.value} for item in documents]
+    activity += [{"activity": f"Explored a {item.subject} solution", "date": item.created_at.isoformat() + "Z", "result": "AI explanation"} for item in solutions]
+    activity += [{"activity": "Reviewed a flashcard", "date": item.created_at.isoformat() + "Z", "result": item.rating} for item in reviews]
     activity.sort(key=lambda item: item["date"], reverse=True)
-    daily = [{"date": (today - timedelta(days=6-i)).isoformat(), "count": sum(item.created_at.date() == today - timedelta(days=6-i) for item in attempts)} for i in range(7)]
-    return {"attempts": len(attempts), "correct": correct, "accuracy": round(100 * correct / len(attempts)) if attempts else None,
-            "documents": len(documents), "subjects": subjects, "daily": daily, "activity": activity[:20]}
+    counts = {}
+    for kind, items in [("practice", attempts), ("solutions", solutions), ("reviews", reviews), ("uploads", documents)]:
+        for item in items:
+            day = item.created_at.date().isoformat()
+            counts.setdefault(day, {"practice": 0, "solutions": 0, "reviews": 0, "uploads": 0})[kind] += 1
+    daily = []
+    for i in range(days):
+        day = (since.date() + timedelta(days=i)).isoformat()
+        tally = counts.get(day, {"practice": 0, "solutions": 0, "reviews": 0, "uploads": 0})
+        daily.append({"date": day, "count": tally["practice"], "total": sum(tally.values()), **tally})
+    # Streak is independent of the reporting period. Today or yesterday can anchor it.
+    dates = union_all(*[select(func.date(model.created_at).label("day")).where(
+        model.user_id == user_id, model.created_at < until) for model in [ProblemAttempt, SolvedProblem, CardReview, Document]]).subquery()
+    active_dates = set((await db.scalars(select(dates.c.day).distinct())).all())
+    cursor = today if today.isoformat() in active_dates else today - timedelta(days=1)
+    streak = 0
+    while cursor.isoformat() in active_dates:
+        streak += 1
+        cursor -= timedelta(days=1)
+    return {"attempts": len(attempts), "graded_attempts": len(graded), "correct": correct,
+            "accuracy": round(100 * correct / len(graded)) if graded else None,
+            "documents": len(documents), "solutions": len(solutions), "reviews": len(reviews),
+            "review_ratings": {rating: sum(r.rating == rating for r in reviews) for rating in ["again", "hard", "good", "easy"]},
+            "active_days": sum(day["total"] > 0 for day in daily), "streak": streak,
+            "subjects": subjects, "daily": daily, "activity": activity[:20], "timezone": "UTC"}
