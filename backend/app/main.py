@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from app.core.database import engine, Base
-from app.api.routes import auth, documents, summarization, questions, workspace, problems
+from app.api.routes import auth, documents, summarization, questions, workspace, problems, flashcards
 from app.api import chat_routes  # ✅ ONLY CHANGE: Import chat_routes instead of chat
 from app.config import settings
 
@@ -67,6 +67,7 @@ app.add_middleware(
 app.mount("/uploads", StaticFiles(directory=settings.upload_dir, check_dir=False), name="uploads")
 
 # Include routers
+app.include_router(flashcards.router, prefix="/api/flashcards", tags=["Flashcards"])
 app.include_router(problems.router, prefix="/api/problems", tags=["Problem solver"])
 app.include_router(workspace.router, prefix="/api", tags=["Workspace"])
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
